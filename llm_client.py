@@ -1,11 +1,11 @@
 """
-llm_client.py — Send vulnerability data to an LLM via OpenRouter for risk assessment.
+llm_client.py — Send vulnerability data to an LLM via OpenRouter for risk explanation.
+The LLM explains the priority assigned by the scoring system — it does not decide the priority.
 Requires OPENROUTER_API_KEY in .env
 """
 
 import requests
 import os
-import sys
 import json
 from dotenv import load_dotenv
 
@@ -13,47 +13,69 @@ load_dotenv()
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-MODEL = "mistralai/mistral-small-3.1-24b-instruct"  # Cheap, capable, Mistral as per brief
+MODEL = "mistralai/mistral-small-3.1-24b-instruct"
 
 
-def assess_vulnerability(vuln_data):
+def explain_vulnerability(vuln_data):
     """
-    Send vulnerability data to the LLM and get a risk assessment.
+    Ask the LLM to explain a vulnerability assessment in plain English.
+
+    The priority has already been determined by the scoring system.
+    The LLM's job is to explain what the vulnerability does, why it
+    received its priority, and what the team should do about it.
 
     vuln_data should be a dict with:
-        - package: str (e.g. "Django 4.2.0")
-        - vuln_id: str (e.g. "CVE-2024-53907")
-        - summary: str (vulnerability description)
-        - severity: str (CVSS score/vector if available)
-        - epss: float or None (exploitation probability)
+        - package: str
+        - vuln_id: str
+        - summary: str
+        - priority: str (CRITICAL/HIGH/MEDIUM/LOW — from scorer.py)
+        - priority_reasoning: str (from scorer.py)
+        - cvss_score: float or None
+        - epss: float or None
         - epss_percentile: float or None
-        - in_kev: bool (is it in CISA KEV?)
+        - in_kev: bool
         - kev_details: dict or None
     """
     if not OPENROUTER_API_KEY:
         print("  [ERROR] OPENROUTER_API_KEY not set in .env")
         return None
 
-    prompt = f"""You are a senior cybersecurity analyst. Assess the following vulnerability and provide a risk assessment.
+    epss_str = f"{vuln_data['epss']:.1%}" if vuln_data.get("epss") else "Not available"
+    epss_pct_str = f"{vuln_data['epss_percentile']:.1%}" if vuln_data.get("epss_percentile") else "Not available"
+    cvss_str = f"{vuln_data['cvss_score']:.1f}" if vuln_data.get("cvss_score") else "Not available"
 
-VULNERABILITY:
+    kev_section = ""
+    if vuln_data.get("in_kev") and vuln_data.get("kev_details"):
+        kev = vuln_data["kev_details"]
+        kev_section = f"""
+- CISA KEV Status: ACTIVELY EXPLOITED
+- KEV Name: {kev.get('name', 'N/A')}
+- Ransomware Use: {kev.get('ransomware_use', 'Unknown')}
+- Required Action: {kev.get('required_action', 'N/A')}"""
+
+    prompt = f"""You are a senior cybersecurity analyst writing a brief for a security manager.
+
+A vulnerability has been detected and scored by our automated triage system. Explain the assessment clearly and concisely.
+
+VULNERABILITY DETAILS:
 - Package: {vuln_data['package']}
-- ID: {vuln_data['vuln_id']}
-- Summary: {vuln_data['summary']}
-- Severity: {vuln_data.get('severity', 'Not available')}
-- EPSS Score: {vuln_data.get('epss', 'Not available')} (probability of exploitation in next 30 days)
-- EPSS Percentile: {vuln_data.get('epss_percentile', 'Not available')}
-- In CISA KEV (actively exploited): {'YES' if vuln_data.get('in_kev') else 'No'}
-{f"- KEV Details: {json.dumps(vuln_data['kev_details'])}" if vuln_data.get('kev_details') else ''}
+- CVE: {vuln_data['vuln_id']}
+- Description: {vuln_data['summary']}
+- Estimated CVSS: {cvss_str}
+- EPSS (probability of exploitation in 30 days): {epss_str}
+- EPSS Percentile: {epss_pct_str}
+- In CISA KEV (confirmed active exploitation): {'YES' if vuln_data.get('in_kev') else 'No'}{kev_section}
 
-Provide your assessment in this exact format:
+ASSIGNED PRIORITY: {vuln_data['priority']}
+SCORING RATIONALE: {vuln_data['priority_reasoning']}
 
-RISK LEVEL: [CRITICAL / HIGH / MEDIUM / LOW]
-EXPLOITATION LIKELIHOOD: [Brief assessment based on EPSS and KEV data]
-IMPACT: [What could happen if exploited]
-REASONING: [2-3 sentences explaining why you assigned this risk level, referencing the specific data points]
-RECOMMENDED ACTION: [Specific remediation step]
-"""
+Write exactly 3 short paragraphs:
+
+1. WHAT: What this vulnerability is and what it could allow an attacker to do (2 sentences max).
+2. WHY THIS PRIORITY: Why it was assigned {vuln_data['priority']} priority, referencing the specific EPSS, CVSS, and KEV data (2 sentences max).
+3. ACTION: What the team should do about it — be specific about the package and version (1-2 sentences max).
+
+Be direct and concise. No bullet points. No headers. Just three short paragraphs."""
 
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -66,7 +88,7 @@ RECOMMENDED ACTION: [Specific remediation step]
             {"role": "user", "content": prompt}
         ],
         "temperature": 0,
-        "max_tokens": 500
+        "max_tokens": 400
     }
 
     try:
@@ -81,22 +103,32 @@ RECOMMENDED ACTION: [Specific remediation step]
 
 
 if __name__ == "__main__":
-    # Quick test with a sample vulnerability
+    # Quick test
     test_data = {
-        "package": "Django 4.2.0",
-        "vuln_id": "CVE-2024-53907",
-        "summary": "Potential denial-of-service vulnerability in strip_tags()",
-        "severity": "CVSS:3.1 — 7.5 HIGH",
-        "epss": 0.034,
-        "epss_percentile": 0.89,
-        "in_kev": False,
-        "kev_details": None
+        "package": "Pillow 9.5.0",
+        "vuln_id": "CVE-2023-4863",
+        "summary": "libwebp: OOB write in BuildHuffmanTable",
+        "priority": "CRITICAL",
+        "priority_reasoning": "This vulnerability is in the CISA Known Exploited Vulnerabilities catalogue, confirming it is actively being exploited in the wild.",
+        "cvss_score": 9.6,
+        "epss": 0.936,
+        "epss_percentile": 0.998,
+        "in_kev": True,
+        "kev_details": {
+            "name": "Google Chromium WebP Heap-Based Buffer Overflow Vulnerability",
+            "ransomware_use": "Unknown",
+            "required_action": "Apply mitigations per vendor instructions."
+        }
     }
 
-    print("\nTesting LLM risk assessment...\n")
-    result = assess_vulnerability(test_data)
+    print("\nTesting LLM explanation...\n")
+    result = explain_vulnerability(test_data)
 
     if result:
-        print(result)
+        print(f"  Priority: {test_data['priority']}")
+        print(f"  Scoring: {test_data['priority_reasoning']}")
+        print(f"\n  AI Explanation:")
+        for line in result.strip().split("\n"):
+            print(f"    {line}")
     else:
-        print("  Failed to get assessment. Check your OPENROUTER_API_KEY in .env")
+        print("  Failed. Check your OPENROUTER_API_KEY in .env")
