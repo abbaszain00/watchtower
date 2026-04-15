@@ -1,9 +1,9 @@
 """
-TowerWatch - AI-Powered Threat Intelligence Platform
+WatchTower - AI-Powered Threat Intelligence Platform
 Version: 1.0.0
 Author: CloudCart Security Team
 
-This module provides the main Streamlit dashboard interface for the TowerWatch
+This module provides the main Streamlit dashboard interface for the WatchTower
 threat intelligence platform. It displays real-time cyber threat data with
 AI-powered analysis and severity classification.
 
@@ -24,7 +24,7 @@ import os
 # ============================================================================
 
 st.set_page_config(
-    page_title="TowerWatch | Threat Intelligence Platform",
+    page_title="WatchTower | Threat Intelligence Platform",
     page_icon="🗼",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -215,7 +215,7 @@ with st.sidebar:
         <div style='text-align: center; padding: 1rem 0 2rem 0;'>
             <div style='font-size: 2.5rem; margin-bottom: 0.75rem;'>🗼</div>
             <h1 style='margin: 0; font-size: 1.5rem; font-weight: 700; color: #3b82f6; letter-spacing: 0.1em;'>
-                TOWERWATCH
+                WATCHTOWER
             </h1>
             <p style='margin: 0.5rem 0 0 0; color: #64748b; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.15em; font-weight: 500;'>
                 Threat Intelligence Platform
@@ -283,7 +283,7 @@ with st.sidebar:
     
     st.divider()
     
-    st.caption("TowerWatch v1.0.0")
+    st.caption("WatchTower v1.0.0")
     st.caption("© 2026 CloudCart Security")
 
 # ============================================================================
@@ -554,7 +554,7 @@ st.divider()
 
 st.markdown(f"""
     <div style='text-align: center; padding: 1rem 0; color: #64748b;'>
-        <p style='margin: 0; font-size: 0.875rem; font-weight: 500;'>TowerWatch Security Operations Center</p>
+        <p style='margin: 0; font-size: 0.875rem; font-weight: 500;'>WatchTower Security Operations Center</p>
         <p style='margin: 0.5rem 0 0 0; font-size: 0.75rem;'>Dashboard last refreshed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC</p>
         <p style='margin: 0.25rem 0 0 0; font-size: 0.75rem;'>Protecting {stack_info['company_name']} | All systems operational</p>
     </div>
