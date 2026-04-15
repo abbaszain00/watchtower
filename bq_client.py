@@ -192,6 +192,39 @@ def get_all_scans():
     return [dict(row) for row in results]
 
 
+def get_last_scan_packages():
+    """
+    Get the unique packages from the most recent scan.
+    Returns a list of dicts with name, version, ecosystem.
+    """
+    client = get_client()
+
+    query = f"""
+        SELECT DISTINCT package, ecosystem
+        FROM `{FULL_TABLE_ID}`
+        WHERE scan_id = (
+            SELECT scan_id
+            FROM `{FULL_TABLE_ID}`
+            ORDER BY scan_timestamp DESC
+            LIMIT 1
+        )
+    """
+
+    results = client.query(query).result()
+    packages = []
+    for row in results:
+        pkg = dict(row)
+        # Split "Django 4.2.0" into name and version
+        parts = pkg["package"].rsplit(" ", 1)
+        if len(parts) == 2:
+            packages.append({
+                "name": parts[0],
+                "version": parts[1],
+                "ecosystem": pkg["ecosystem"]
+            })
+    return packages
+
+
 if __name__ == "__main__":
     print("\nSetting up BigQuery for Watchtower...\n")
     setup_bigquery()

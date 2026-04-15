@@ -24,6 +24,7 @@ from kev_client import download_kev, check_kev
 from scorer import calculate_priority
 from llm_client import explain_vulnerability
 from bq_client import save_findings
+from discord_alert import send_alerts
 
 # ============================================================================
 # PAGE CONFIGURATION
@@ -150,6 +151,12 @@ if findings:
     LOW_COUNT = priority_counts["LOW"]
     TRIAGE_TIME = findings[0].get("triage_time_seconds", 0) if findings else 0
     TOTAL_SCANS = len(scan_history)
+
+    # Extract scan info for sidebar
+    SOURCE_FILE = findings[0].get("source_file", "Unknown") if findings else "No scan yet"
+    SCAN_TIME = findings[0].get("scan_timestamp", "") if findings else ""
+    # Get unique packages scanned
+    PACKAGES_SCANNED = list(dict.fromkeys(f.get("package", "") for f in findings))
 else:
     ACTIVE_THREATS = 0
     CRITICAL_COUNT = 0
@@ -158,6 +165,9 @@ else:
     LOW_COUNT = 0
     TRIAGE_TIME = 0
     TOTAL_SCANS = 0
+    SOURCE_FILE = "No scan yet"
+    SCAN_TIME = ""
+    PACKAGES_SCANNED = []
 
 # ============================================================================
 # SIDEBAR
@@ -178,43 +188,55 @@ with st.sidebar:
     
     st.divider()
     
-    st.subheader("🎯 Protected Environment")
+    # Last scan info
+    st.subheader("🎯 Last Scan")
+    
+    source_display = os.path.basename(SOURCE_FILE) if SOURCE_FILE != "No scan yet" else "No scan yet"
     
     st.markdown(f"""
         <div style='background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%); padding: 1rem; border-radius: 6px; border: 1px solid #2563eb; margin-bottom: 1rem;'>
-            <p style='margin: 0; font-size: 0.7rem; color: #93c5fd; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;'>MONITORED ASSET</p>
-            <p style='margin: 0.5rem 0 0 0; font-size: 1rem; color: #ffffff; font-weight: 600;'>{stack_info['company_name']}</p>
+            <p style='margin: 0; font-size: 0.7rem; color: #93c5fd; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;'>SCANNED FILE</p>
+            <p style='margin: 0.5rem 0 0 0; font-size: 1rem; color: #ffffff; font-weight: 600;'>{source_display}</p>
         </div>
     """, unsafe_allow_html=True)
     
-    st.markdown("**Technology Stack**")
-    
-    stack_components = [
-        ("💻", "Backend", stack_info['backend']),
-        ("🗄️", "Database", stack_info['database']),
-        ("📦", "Deployment", stack_info['deployment']),
-        ("☁️", "Cloud", stack_info['cloud_provider'])
-    ]
-    
-    for icon, label, value in stack_components:
-        st.markdown(f"""
-            <div style='background-color: rgba(30, 41, 59, 0.5); padding: 0.75rem; margin-bottom: 0.5rem; border-radius: 4px; border-left: 3px solid #475569;'>
-                <p style='margin: 0; font-size: 0.7rem; color: #94a3b8; text-transform: uppercase;'>{icon} {label}</p>
-                <p style='margin: 0.25rem 0 0 0; color: #e2e8f0; font-weight: 500;'>{value}</p>
-            </div>
-        """, unsafe_allow_html=True)
-    
     st.divider()
     
-    st.subheader("🔐 Critical Assets")
-    for asset in stack_info['critical_assets']:
-        st.markdown(f"""
-            <div style='background-color: rgba(220, 38, 38, 0.1); padding: 0.5rem 0.75rem; margin-bottom: 0.5rem; border-radius: 4px; border-left: 3px solid #dc2626;'>
-                <p style='margin: 0; color: #fca5a5; font-size: 0.875rem;'>• {asset}</p>
-            </div>
-        """, unsafe_allow_html=True)
+    # Dependencies list
+    if PACKAGES_SCANNED:
+        st.subheader(f"📦 Dependencies ({len(PACKAGES_SCANNED)})")
+        
+        for pkg in PACKAGES_SCANNED:
+            st.markdown(f"""
+                <div style='background-color: rgba(30, 41, 59, 0.5); padding: 0.5rem 0.75rem; margin-bottom: 0.25rem; border-radius: 4px; border-left: 3px solid #475569;'>
+                    <p style='margin: 0; color: #e2e8f0; font-size: 0.8rem;'>• {pkg}</p>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        st.divider()
     
-    st.divider()
+    # Scan results summary
+    if findings:
+        st.subheader("🔍 Scan Results")
+        
+        priority_colors = {
+            "CRITICAL": "#dc2626",
+            "HIGH": "#f59e0b",
+            "MEDIUM": "#eab308",
+            "LOW": "#3b82f6"
+        }
+        
+        for level, count in [("CRITICAL", CRITICAL_COUNT), ("HIGH", HIGH_COUNT), ("MEDIUM", MEDIUM_COUNT), ("LOW", LOW_COUNT)]:
+            color = priority_colors[level]
+            st.markdown(f"""
+                <div style='background-color: rgba(30, 41, 59, 0.5); padding: 0.5rem 0.75rem; margin-bottom: 0.25rem; border-radius: 4px; border-left: 3px solid {color};'>
+                    <p style='margin: 0; color: #e2e8f0; font-size: 0.8rem;'>
+                        <span style='color: {color}; font-weight: 700;'>{count}</span> {level}
+                    </p>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        st.divider()
     
     # Connection status
     status_color = "#059669" if bq_connected else "#dc2626"
@@ -229,13 +251,153 @@ with st.sidebar:
     
     st.divider()
     
-    if st.button("🔄 Refresh Data", use_container_width=True):
+    if st.button("🔄 Re-scan for new threats", use_container_width=True):
+        st.session_state["rescan_triggered"] = True
         st.cache_data.clear()
         st.rerun()
     
     st.divider()
     st.caption("WatchTower v1.0.0")
-    st.caption("© 2026 CloudCart Security")
+
+# Handle rescan if triggered
+if st.session_state.get("rescan_triggered", False):
+    st.session_state["rescan_triggered"] = False
+    
+    try:
+        from bq_client import get_last_scan_packages
+        packages = get_last_scan_packages()
+        
+        if packages:
+            import time
+            
+            st.info(f"Re-scanning {len(packages)} packages for new vulnerabilities...")
+            start_time = time.time()
+            progress = st.progress(0, text="Loading CISA KEV catalogue...")
+            
+            # Load KEV
+            kev_data = download_kev(force=True)  # Force fresh download
+            progress.progress(15, text="Scanning against OSV...")
+            
+            # Query OSV for each package
+            all_findings = []
+            for i, dep in enumerate(packages):
+                pct = 15 + int((i / len(packages)) * 45)
+                progress.progress(pct, text=f"Scanning {dep['name']} {dep['version']}...")
+                
+                vulns = query_osv(dep["name"], dep["version"], dep["ecosystem"])
+                if vulns:
+                    summaries = summarise_vulns(vulns)
+                    for vuln_summary in summaries:
+                        finding = {
+                            "package": f"{dep['name']} {dep['version']}",
+                            "ecosystem": dep["ecosystem"],
+                            "vuln_id": vuln_summary["id"],
+                            "cve_ids": [a for a in vuln_summary["aliases"] if a.startswith("CVE-")],
+                            "summary": vuln_summary["summary"],
+                            "severity": vuln_summary["severity"],
+                            "epss": None,
+                            "epss_percentile": None,
+                            "in_kev": False,
+                            "kev_details": None,
+                        }
+                        all_findings.append(finding)
+            
+            if all_findings:
+                # Deduplicate
+                progress.progress(65, text="Deduplicating...")
+                seen = {}
+                for finding in all_findings:
+                    key = finding["cve_ids"][0] if finding["cve_ids"] else finding["vuln_id"]
+                    if key not in seen:
+                        seen[key] = finding
+                    else:
+                        existing = seen[key]
+                        if existing["summary"] == "No summary available" and finding["summary"] != "No summary available":
+                            seen[key] = finding
+                all_findings = list(seen.values())
+                
+                # Enrich with EPSS
+                progress.progress(70, text="Checking EPSS scores...")
+                all_cve_ids = set()
+                for f in all_findings:
+                    all_cve_ids.update(f["cve_ids"])
+                
+                epss_scores = {}
+                if all_cve_ids:
+                    cve_list = list(all_cve_ids)
+                    for i in range(0, len(cve_list), 30):
+                        chunk = cve_list[i:i + 30]
+                        scores = get_epss_scores(chunk)
+                        epss_scores.update(scores)
+                
+                progress.progress(80, text="Checking CISA KEV...")
+                kev_matches = check_kev(list(all_cve_ids), kev_data)
+                
+                for finding in all_findings:
+                    for cve_id in finding["cve_ids"]:
+                        if cve_id in epss_scores:
+                            finding["epss"] = epss_scores[cve_id]["epss"]
+                            finding["epss_percentile"] = epss_scores[cve_id]["percentile"]
+                        if cve_id in kev_matches:
+                            finding["in_kev"] = True
+                            finding["kev_details"] = kev_matches[cve_id]
+                
+                # Score
+                for finding in all_findings:
+                    score_result = calculate_priority(finding)
+                    finding["priority"] = score_result["priority"]
+                    finding["priority_rank"] = score_result["priority_rank"]
+                    finding["cvss_score"] = score_result["cvss_score"]
+                    finding["priority_reasoning"] = score_result["reasoning"]
+                
+                all_findings.sort(key=lambda f: (f["priority_rank"], -(f["epss"] or 0)))
+                
+                # LLM for critical/high
+                critical_high = [f for f in all_findings if f["priority"] in ("CRITICAL", "HIGH")]
+                if critical_high:
+                    progress.progress(85, text="Generating AI explanations...")
+                    for finding in critical_high:
+                        primary_cve = finding["cve_ids"][0] if finding["cve_ids"] else finding["vuln_id"]
+                        llm_input = {
+                            "package": finding["package"],
+                            "vuln_id": primary_cve,
+                            "summary": finding["summary"],
+                            "priority": finding["priority"],
+                            "priority_reasoning": finding["priority_reasoning"],
+                            "cvss_score": finding["cvss_score"],
+                            "epss": finding["epss"],
+                            "epss_percentile": finding["epss_percentile"],
+                            "in_kev": finding["in_kev"],
+                            "kev_details": finding["kev_details"],
+                        }
+                        explanation = explain_vulnerability(llm_input)
+                        finding["llm_explanation"] = explanation
+                
+                elapsed = time.time() - start_time
+                
+                # Send Discord alerts
+                send_alerts(all_findings, {
+                    "filepath": "rescan",
+                    "deps_scanned": len(packages),
+                    "elapsed": elapsed,
+                })
+                
+                # Save to BigQuery
+                progress.progress(95, text="Saving to BigQuery...")
+                try:
+                    save_findings(all_findings, "rescan", elapsed)
+                except Exception as e:
+                    st.warning(f"BigQuery save failed: {e}")
+                
+                progress.progress(100, text="Re-scan complete!")
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                progress.progress(100, text="Re-scan complete — no vulnerabilities found!")
+        else:
+            st.warning("No previous scan found to re-scan.")
+    except Exception as e:
+        st.error(f"Re-scan failed: {e}")
 
 # ============================================================================
 # MAIN CONTENT
@@ -376,6 +538,13 @@ def run_scan_pipeline(filepath, filename):
             finding["llm_explanation"] = explanation
 
     elapsed = time.time() - start_time
+
+    # Send Discord alerts
+    send_alerts(all_findings, {
+        "filepath": filename,
+        "deps_scanned": len(deps),
+        "elapsed": elapsed,
+    })
 
     # Save to BigQuery
     progress.progress(95, text="Saving results to BigQuery...")

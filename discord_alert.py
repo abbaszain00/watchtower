@@ -23,8 +23,6 @@ def send_alerts(all_findings, scan_meta=None):
         print("  [WARNING] DISCORD_WEBHOOK_URL not set in .env — skipping alerts")
         return
 
-    digest_lines = []
-
     for finding in all_findings:
         tier = finding.get("priority", "LOW")
         cve = finding["cve_ids"][0] if finding.get("cve_ids") else finding.get("vuln_id", "Unknown")
@@ -66,15 +64,6 @@ def send_alerts(all_findings, scan_meta=None):
             if llm:
                 lines.append(f"**AI assessment:**\n{llm}")
             post_message("\n".join(lines))
-
-        else:
-            icon = "🟡" if tier == "MEDIUM" else "🟢"
-            digest_lines.append(f"{icon} {cve} — {package} (EPSS: {epss_str})")
-
-    # Send one message for all medium/low findings
-    if digest_lines:
-        digest = "📋 **Lower priority findings — review when you can:**\n" + "\n".join(digest_lines)
-        post_message(digest)
 
     # Send a clean scan message if nothing was found
     if not all_findings and scan_meta:

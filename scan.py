@@ -19,6 +19,7 @@ from llm_client import explain_vulnerability
 from bq_client import save_findings
 from discord_alert import send_alerts
 
+
 def deduplicate_findings(findings):
     """
     Remove duplicate findings for the same CVE.
@@ -232,11 +233,12 @@ def scan(filepath, use_llm=True):
 
     elapsed = time.time() - start_time
 
+    # Send Discord alerts
     send_alerts(all_findings, {
         "filepath": filepath,
         "deps_scanned": len(deps),
         "elapsed": elapsed,
-    })    
+    })
 
     # Count by priority
     priority_counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
