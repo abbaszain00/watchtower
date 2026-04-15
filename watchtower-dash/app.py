@@ -13,8 +13,17 @@ import json
 import os
 import sys
 
-# Add parent directory to path so we can import bq_client
+# Add parent directory to path so we can import project modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+import tempfile
+from parse_deps import parse_file
+from osv_client import query_osv, extract_cve_ids, summarise_vulns
+from epss_client import get_epss_scores
+from kev_client import download_kev, check_kev
+from scorer import calculate_priority
+from llm_client import explain_vulnerability
+from bq_client import save_findings
 
 # ============================================================================
 # PAGE CONFIGURATION
@@ -241,6 +250,182 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
+# ============================================================================
+# FILE UPLOAD & SCAN
+# ============================================================================
+
+def run_scan_pipeline(filepath, filename):
+    """Run the full Watchtower scan pipeline and return results."""
+    import time
+
+    start_time = time.time()
+    progress = st.progress(0, text="Parsing dependencies...")
+
+    # Step 1: Parse
+    deps = parse_file(filepath)
+    if not deps:
+        st.warning("No dependencies found in the uploaded file.")
+        return
+
+    progress.progress(10, text=f"Found {len(deps)} dependencies. Loading CISA KEV...")
+
+    # Step 2: Load KEV
+    kev_data = download_kev()
+    progress.progress(20, text="Scanning against OSV...")
+
+    # Step 3: Query OSV
+    all_findings = []
+    for i, dep in enumerate(deps):
+        pct = 20 + int((i / len(deps)) * 40)
+        progress.progress(pct, text=f"Scanning {dep['name']} {dep['version']}...")
+
+        vulns = query_osv(dep["name"], dep["version"], dep["ecosystem"])
+        if vulns:
+            summaries = summarise_vulns(vulns)
+            for vuln_summary in summaries:
+                finding = {
+                    "package": f"{dep['name']} {dep['version']}",
+                    "ecosystem": dep["ecosystem"],
+                    "vuln_id": vuln_summary["id"],
+                    "cve_ids": [a for a in vuln_summary["aliases"] if a.startswith("CVE-")],
+                    "summary": vuln_summary["summary"],
+                    "severity": vuln_summary["severity"],
+                    "epss": None,
+                    "epss_percentile": None,
+                    "in_kev": False,
+                    "kev_details": None,
+                }
+                all_findings.append(finding)
+
+    if not all_findings:
+        progress.progress(100, text="Scan complete — no vulnerabilities found!")
+        st.success(f"No vulnerabilities found in {len(deps)} dependencies.")
+        return
+
+    # Step 4: Deduplicate
+    progress.progress(65, text="Deduplicating findings...")
+    seen = {}
+    for finding in all_findings:
+        key = finding["cve_ids"][0] if finding["cve_ids"] else finding["vuln_id"]
+        if key not in seen:
+            seen[key] = finding
+        else:
+            existing = seen[key]
+            if existing["summary"] == "No summary available" and finding["summary"] != "No summary available":
+                seen[key] = finding
+            elif not existing["severity"] and finding["severity"]:
+                seen[key] = finding
+    all_findings = list(seen.values())
+
+    # Step 5: Enrich
+    progress.progress(70, text="Enriching with EPSS scores...")
+
+    all_cve_ids = set()
+    for f in all_findings:
+        all_cve_ids.update(f["cve_ids"])
+
+    epss_scores = {}
+    if all_cve_ids:
+        cve_list = list(all_cve_ids)
+        for i in range(0, len(cve_list), 30):
+            chunk = cve_list[i:i + 30]
+            scores = get_epss_scores(chunk)
+            epss_scores.update(scores)
+
+    progress.progress(80, text="Checking CISA KEV catalogue...")
+    kev_matches = check_kev(list(all_cve_ids), kev_data)
+
+    for finding in all_findings:
+        for cve_id in finding["cve_ids"]:
+            if cve_id in epss_scores:
+                finding["epss"] = epss_scores[cve_id]["epss"]
+                finding["epss_percentile"] = epss_scores[cve_id]["percentile"]
+            if cve_id in kev_matches:
+                finding["in_kev"] = True
+                finding["kev_details"] = kev_matches[cve_id]
+
+    # Score
+    for finding in all_findings:
+        score_result = calculate_priority(finding)
+        finding["priority"] = score_result["priority"]
+        finding["priority_rank"] = score_result["priority_rank"]
+        finding["cvss_score"] = score_result["cvss_score"]
+        finding["priority_reasoning"] = score_result["reasoning"]
+
+    all_findings.sort(key=lambda f: (f["priority_rank"], -(f["epss"] or 0)))
+
+    # Step 6: LLM for critical/high
+    critical_high = [f for f in all_findings if f["priority"] in ("CRITICAL", "HIGH")]
+    if critical_high:
+        progress.progress(85, text="Generating AI explanations for critical findings...")
+        for finding in critical_high:
+            primary_cve = finding["cve_ids"][0] if finding["cve_ids"] else finding["vuln_id"]
+            llm_input = {
+                "package": finding["package"],
+                "vuln_id": primary_cve,
+                "summary": finding["summary"],
+                "priority": finding["priority"],
+                "priority_reasoning": finding["priority_reasoning"],
+                "cvss_score": finding["cvss_score"],
+                "epss": finding["epss"],
+                "epss_percentile": finding["epss_percentile"],
+                "in_kev": finding["in_kev"],
+                "kev_details": finding["kev_details"],
+            }
+            explanation = explain_vulnerability(llm_input)
+            finding["llm_explanation"] = explanation
+
+    elapsed = time.time() - start_time
+
+    # Save to BigQuery
+    progress.progress(95, text="Saving results to BigQuery...")
+    try:
+        save_findings(all_findings, filename, elapsed)
+    except Exception as e:
+        st.warning(f"BigQuery save failed: {e}")
+
+    progress.progress(100, text="Scan complete!")
+
+    # Clear cached data so dashboard refreshes
+    st.cache_data.clear()
+
+
+# Upload section
+st.markdown("""
+    <div style='background: linear-gradient(135deg, #1e3a8a 0%, #1e293b 100%); padding: 1.5rem; border-radius: 8px; border: 1px solid #2563eb; margin-bottom: 2rem;'>
+        <h3 style='margin: 0 0 0.5rem 0; color: #93c5fd;'>📂 Scan Dependencies</h3>
+        <p style='margin: 0; color: #64748b; font-size: 0.875rem;'>Upload a requirements.txt or package.json to scan for vulnerabilities</p>
+    </div>
+""", unsafe_allow_html=True)
+
+col_upload, col_scan = st.columns([3, 1])
+
+with col_upload:
+    uploaded_file = st.file_uploader(
+        "Drop your dependency file here",
+        type=["txt", "json"],
+        label_visibility="collapsed"
+    )
+
+with col_scan:
+    scan_clicked = st.button("🔍 Scan Now", use_container_width=True, type="primary", disabled=uploaded_file is None)
+
+if scan_clicked and uploaded_file is not None:
+    # Save uploaded file temporarily
+    with tempfile.NamedTemporaryFile(mode='w', suffix=uploaded_file.name, delete=False) as tmp:
+        content = uploaded_file.read().decode('utf-8')
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    run_scan_pipeline(tmp_path, uploaded_file.name)
+
+    # Clean up temp file
+    os.unlink(tmp_path)
+
+    st.rerun()
+
+st.divider()
+
 # Metrics row
 col1, col2, col3, col4, col5 = st.columns(5)
 
@@ -262,7 +447,7 @@ st.divider()
 # ============================================================================
 
 if not findings:
-    st.info("No scan data found. Run `python scan.py samples/requirements.txt` to populate the dashboard.")
+    st.info("No scan data found. Upload a dependency file above to run your first scan.")
 else:
     # Severity colour mapping
     severity_colors = {
