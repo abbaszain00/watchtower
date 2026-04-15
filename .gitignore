@@ -4,3 +4,5 @@ __pycache__/
 venv/
 .venv/
 results/
+kev_cache.json
+watchtower-*.json

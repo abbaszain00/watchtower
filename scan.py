@@ -16,6 +16,7 @@ from epss_client import get_epss_scores, format_epss
 from kev_client import download_kev, check_kev
 from scorer import calculate_priority
 from llm_client import explain_vulnerability
+from bq_client import save_findings
 
 
 def deduplicate_findings(findings):
@@ -311,6 +312,14 @@ def scan(filepath, use_llm=True):
             print(f"    {finding['summary']} — {cvss_str} | {epss_str}")
 
     print()
+
+    # Save to BigQuery
+    try:
+        print("  Saving findings to BigQuery...")
+        save_findings(all_findings, filepath, elapsed)
+    except Exception as e:
+        print(f"  [WARNING] BigQuery save failed: {e}")
+        print(f"  (Results still displayed above — BigQuery is optional)")
 
 
 if __name__ == "__main__":
