@@ -12,53 +12,27 @@ load_dotenv()
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 
-def classify_finding(finding):
-    """
-    Returns 'CRITICAL', 'HIGH', 'MEDIUM', or 'LOW' for a single finding.
-    """
-    in_kev = finding.get("in_kev", False)
-    epss = finding.get("epss") or 0.0
-    kev = finding.get("kev_details") or {}
-    ransomware = kev.get("ransomware_use", "") == "Known"
-
-    # Pull risk level out of the LLM assessment text
-    llm_risk = None
-    llm_text = finding.get("llm_assessment", "") or ""
-    for line in llm_text.splitlines():
-        if line.upper().startswith("RISK LEVEL"):
-            for level in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
-                if level in line.upper():
-                    llm_risk = level
-                    break
-
-    if (in_kev and ransomware) or epss > 0.50:
-        return "CRITICAL"
-    if in_kev or epss > 0.10 or llm_risk in ("CRITICAL", "HIGH"):
-        return "HIGH"
-    if llm_risk == "MEDIUM" or epss > 0.01:
-        return "MEDIUM"
-    return "LOW"
-
-
 def send_alerts(all_findings, scan_meta=None):
     """
-    Loops through findings, classifies each one, and sends the right message.
-    MEDIUM and LOW findings are bundled into one digest at the end.
+    Loops through findings and sends Discord alerts.
+    CRITICAL and HIGH get individual messages.
+    MEDIUM and LOW are bundled into one digest.
+    Uses the priority already assigned by scorer.py.
     """
     if not WEBHOOK_URL:
-        print("  [ERROR] DISCORD_WEBHOOK_URL not set in .env")
+        print("  [WARNING] DISCORD_WEBHOOK_URL not set in .env — skipping alerts")
         return
 
     digest_lines = []
 
     for finding in all_findings:
-        tier = classify_finding(finding)
+        tier = finding.get("priority", "LOW")
         cve = finding["cve_ids"][0] if finding.get("cve_ids") else finding.get("vuln_id", "Unknown")
         epss = finding.get("epss")
         epss_str = f"{epss * 100:.1f}%" if epss is not None else "N/A"
         package = finding.get("package", "Unknown")
         summary = finding.get("summary", "No summary available")
-        llm = finding.get("llm_assessment", "") or ""
+        llm = finding.get("llm_explanation", "") or ""
         kev = finding.get("kev_details") or {}
 
         if tier == "CRITICAL":
@@ -102,7 +76,7 @@ def send_alerts(all_findings, scan_meta=None):
         digest = "📋 **Lower priority findings — review when you can:**\n" + "\n".join(digest_lines)
         post_message(digest)
 
-    # Send a clean scan message if nothing was found at all
+    # Send a clean scan message if nothing was found
     if not all_findings and scan_meta:
         filepath = scan_meta.get("filepath", "your dependencies")
         deps = scan_meta.get("deps_scanned", "?")
