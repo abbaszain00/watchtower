@@ -25,8 +25,32 @@ KEY_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "watchtower-493408-3429bd
 
 
 def get_client():
-    """Create an authenticated BigQuery client."""
-    return bigquery.Client.from_service_account_json(KEY_FILE, project=PROJECT_ID)
+    """
+    Create an authenticated BigQuery client.
+    Tries Streamlit secrets first (for cloud deployment),
+    falls back to local JSON key file (for local development).
+    """
+    # Try Streamlit secrets first (cloud deployment)
+    try:
+        import streamlit as st
+        if hasattr(st, 'secrets') and "gcp_service_account" in st.secrets:
+            from google.oauth2 import service_account
+            creds_dict = dict(st.secrets["gcp_service_account"])
+            credentials = service_account.Credentials.from_service_account_info(creds_dict)
+            return bigquery.Client(credentials=credentials, project=PROJECT_ID)
+    except ImportError:
+        pass
+    except Exception as e:
+        print(f"  [WARNING] Streamlit secrets failed: {e}")
+
+    # Fall back to local JSON key file
+    if os.path.exists(KEY_FILE):
+        return bigquery.Client.from_service_account_json(KEY_FILE, project=PROJECT_ID)
+    
+    raise FileNotFoundError(
+        f"No BigQuery credentials found. Either set up Streamlit secrets "
+        f"or provide {KEY_FILE}"
+    )
 
 
 def setup_bigquery():
