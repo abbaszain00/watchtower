@@ -426,7 +426,9 @@ def run_scan_pipeline(filepath, filename):
     # Step 1: Parse
     deps = parse_file(filepath)
     if not deps:
-        st.warning("No dependencies found in the uploaded file.")
+        st.error(f"⚠️ No dependencies found in {filename}. Please upload a valid requirements.txt or package.json file.")
+        import time
+        time.sleep(2)
         return
 
     progress.progress(10, text=f"Found {len(deps)} dependencies. Loading CISA KEV...")
@@ -460,8 +462,10 @@ def run_scan_pipeline(filepath, filename):
                 all_findings.append(finding)
 
     if not all_findings:
-        progress.progress(100, text="Scan complete — no vulnerabilities found!")
-        st.success(f"No vulnerabilities found in {len(deps)} dependencies.")
+        progress.progress(100, text="Scan complete!")
+        st.success(f"✅ No vulnerabilities found in {len(deps)} dependencies. Your stack looks clean!")
+        import time
+        time.sleep(2)
         return
 
     # Step 4: Deduplicate
