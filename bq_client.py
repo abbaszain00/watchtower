@@ -1,12 +1,4 @@
-"""
-bq_client.py — BigQuery integration for Watchtower.
-Stores scan findings in BigQuery for dashboard consumption.
-
-Requires:
-  - pip install google-cloud-bigquery
-  - GCP service account JSON key file
-  - GOOGLE_APPLICATION_CREDENTIALS env var pointing to the key file
-"""
+"""BigQuery integration — stores scan findings for dashboard consumption."""
 
 import os
 from datetime import datetime
@@ -25,11 +17,7 @@ KEY_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "watchtower-493408-3429bd
 
 
 def get_client():
-    """
-    Create an authenticated BigQuery client.
-    Tries Streamlit secrets first (for cloud deployment),
-    falls back to local JSON key file (for local development).
-    """
+    """Get an authenticated BigQuery client (Streamlit secrets → local JSON fallback)."""
     # Try Streamlit secrets first (cloud deployment)
     try:
         import streamlit as st
@@ -107,15 +95,7 @@ def setup_bigquery():
 
 
 def save_findings(findings, source_file, triage_time, scan_id=None):
-    """
-    Write scan findings to BigQuery.
-
-    Args:
-        findings: list of finding dicts from scan.py
-        source_file: name of the scanned file
-        triage_time: total scan time in seconds
-        scan_id: optional scan identifier (auto-generated if not provided)
-    """
+    """Write scan findings to BigQuery."""
     client = get_client()
 
     if scan_id is None:
@@ -160,10 +140,7 @@ def save_findings(findings, source_file, triage_time, scan_id=None):
 
 
 def get_latest_scan():
-    """
-    Retrieve the most recent scan results from BigQuery.
-    Returns a list of dicts.
-    """
+    """Get the most recent scan results from BigQuery."""
     client = get_client()
 
     query = f"""
@@ -190,10 +167,7 @@ def get_latest_scan():
 
 
 def get_all_scans():
-    """
-    Retrieve a summary of all scans.
-    Returns one row per scan with counts.
-    """
+    """Get a summary of all scans (one row per scan with counts)."""
     client = get_client()
 
     query = f"""
@@ -217,10 +191,7 @@ def get_all_scans():
 
 
 def get_last_scan_packages():
-    """
-    Get the unique packages from the most recent scan.
-    Returns a list of dicts with name, version, ecosystem.
-    """
+    """Get unique packages from the most recent scan."""
     client = get_client()
 
     query = f"""

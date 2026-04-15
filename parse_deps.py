@@ -1,7 +1,4 @@
-"""
-parse_deps.py — Parse dependency files into a list of (name, version, ecosystem) tuples.
-Supports: requirements.txt (PyPI), package.json (npm)
-"""
+"""Parse dependency files (requirements.txt, package.json)."""
 
 import json
 import sys

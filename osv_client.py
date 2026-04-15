@@ -1,8 +1,4 @@
-"""
-osv_client.py — Query the OSV API for vulnerabilities affecting a specific package version.
-API docs: https://google.github.io/osv.dev/api/
-Free, no key needed, no rate limits.
-"""
+"""Query the OSV API for known vulnerabilities. https://google.github.io/osv.dev/api/"""
 
 import requests
 import sys
@@ -55,7 +51,7 @@ def summarise_vulns(vulns):
             "id": vuln.get("id"),
             "aliases": vuln.get("aliases", []),
             "summary": vuln.get("summary", "No summary available"),
-            "details": vuln.get("details", "")[:300],  # Truncate for readability
+            "details": vuln.get("details", "")[:300],
             "severity": [],
             "references": [ref.get("url") for ref in vuln.get("references", [])[:3]]
         }

@@ -1,12 +1,9 @@
-"""
-llm_client.py — Send vulnerability data to an LLM via OpenRouter for risk explanation.
-The LLM explains the priority assigned by the scoring system — it does not decide the priority.
-Requires OPENROUTER_API_KEY in .env
+"""Send vulnerability data to an LLM via OpenRouter for plain-English explanations.
+The LLM explains — it never decides priority. Requires OPENROUTER_API_KEY in .env.
 """
 
 import requests
 import os
-import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -17,25 +14,7 @@ MODEL = "mistralai/mistral-small-3.1-24b-instruct"
 
 
 def explain_vulnerability(vuln_data):
-    """
-    Ask the LLM to explain a vulnerability assessment in plain English.
-
-    The priority has already been determined by the scoring system.
-    The LLM's job is to explain what the vulnerability does, why it
-    received its priority, and what the team should do about it.
-
-    vuln_data should be a dict with:
-        - package: str
-        - vuln_id: str
-        - summary: str
-        - priority: str (CRITICAL/HIGH/MEDIUM/LOW — from scorer.py)
-        - priority_reasoning: str (from scorer.py)
-        - cvss_score: float or None
-        - epss: float or None
-        - epss_percentile: float or None
-        - in_kev: bool
-        - kev_details: dict or None
-    """
+    """Ask the LLM to explain a scored vulnerability in plain English."""
     if not OPENROUTER_API_KEY:
         print("  [ERROR] OPENROUTER_API_KEY not set in .env")
         return None

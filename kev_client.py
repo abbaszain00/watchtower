@@ -1,8 +1,4 @@
-"""
-kev_client.py — Download and query the CISA Known Exploited Vulnerabilities (KEV) catalogue.
-Source: https://www.cisa.gov/known-exploited-vulnerabilities-catalog
-Free, no key needed, no rate limits. Just a JSON file download.
-"""
+"""Download and query the CISA Known Exploited Vulnerabilities (KEV) catalogue."""
 
 import requests
 import sys
