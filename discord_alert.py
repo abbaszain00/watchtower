@@ -1,8 +1,3 @@
-"""
-discord_alert.py — Discord alerting for Watchtower.
-Add DISCORD_WEBHOOK_URL to your .env file.
-"""
-
 import requests
 import os
 from dotenv import load_dotenv
@@ -13,14 +8,8 @@ WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 
 def send_alerts(all_findings, scan_meta=None):
-    """
-    Loops through findings and sends Discord alerts.
-    CRITICAL and HIGH get individual messages.
-    MEDIUM and LOW are bundled into one digest.
-    Uses the priority already assigned by scorer.py.
-    """
     if not WEBHOOK_URL:
-        print("  [WARNING] DISCORD_WEBHOOK_URL not set in .env — skipping alerts")
+        print("  [WARNING] DISCORD_WEBHOOK_URL not set — skipping alerts")
         return
 
     for finding in all_findings:
@@ -30,7 +19,7 @@ def send_alerts(all_findings, scan_meta=None):
         epss_str = f"{epss * 100:.1f}%" if epss is not None else "N/A"
         package = finding.get("package", "Unknown")
         summary = finding.get("summary", "No summary available")
-        llm = finding.get("llm_explanation", "") or ""
+        llm = finding.get("llm_explanation") or ""
         kev = finding.get("kev_details") or {}
 
         if tier == "CRITICAL":
@@ -44,7 +33,7 @@ def send_alerts(all_findings, scan_meta=None):
             if finding.get("in_kev"):
                 lines.append(f"**CISA KEV:** {kev.get('name', 'Actively exploited in the wild')}")
             if kev.get("ransomware_use") == "Known":
-                lines.append("**Ransomware:** Known ransomware campaign use confirmed")
+                lines.append("**Ransomware:** Known campaign use confirmed")
             if kev.get("required_action"):
                 lines.append(f"**Required action:** {kev['required_action']}")
             if llm:
@@ -53,7 +42,7 @@ def send_alerts(all_findings, scan_meta=None):
 
         elif tier == "HIGH":
             lines = [
-                f"🔴 HIGH severity vulnerability",
+                "🔴 HIGH severity vulnerability",
                 f"**Package:** {package}",
                 f"**CVE:** {cve}",
                 f"**EPSS:** {epss_str} exploitation probability",
@@ -65,7 +54,6 @@ def send_alerts(all_findings, scan_meta=None):
                 lines.append(f"**AI assessment:**\n{llm}")
             post_message("\n".join(lines))
 
-    # Send a clean scan message if nothing was found
     if not all_findings and scan_meta:
         filepath = scan_meta.get("filepath", "your dependencies")
         deps = scan_meta.get("deps_scanned", "?")
@@ -73,11 +61,10 @@ def send_alerts(all_findings, scan_meta=None):
 
 
 def post_message(text):
-    """Send a plain text message to the Discord webhook."""
     if not WEBHOOK_URL:
         return
     try:
-        response = requests.post(WEBHOOK_URL, json={"content": text}, timeout=10)
-        response.raise_for_status()
+        resp = requests.post(WEBHOOK_URL, json={"content": text}, timeout=10)
+        resp.raise_for_status()
     except requests.exceptions.RequestException as e:
         print(f"  [ERROR] Discord alert failed: {e}")

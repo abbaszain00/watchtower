@@ -1,6 +1,5 @@
-"""Send vulnerability data to an LLM via OpenRouter for plain-English explanations.
-The LLM explains — it never decides priority. Requires OPENROUTER_API_KEY in .env.
-"""
+# LLM explanations via OpenRouter — explains findings, never scores them
+# Needs OPENROUTER_API_KEY in .env
 
 import requests
 import os
@@ -14,7 +13,6 @@ MODEL = "mistralai/mistral-small-3.1-24b-instruct"
 
 
 def explain_vulnerability(vuln_data):
-    """Ask the LLM to explain a scored vulnerability in plain English."""
     if not OPENROUTER_API_KEY:
         print("  [ERROR] OPENROUTER_API_KEY not set in .env")
         return None
@@ -63,32 +61,27 @@ Be direct and concise. No bullet points. No headers. Just three short paragraphs
 
     payload = {
         "model": MODEL,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
+        "messages": [{"role": "user", "content": prompt}],
         "temperature": 0,
         "max_tokens": 400
     }
 
     try:
-        response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
-
+        resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=30)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
     except requests.exceptions.RequestException as e:
         print(f"  [ERROR] LLM request failed: {e}")
         return None
 
 
 if __name__ == "__main__":
-    # Quick test
-    test_data = {
+    test = {
         "package": "Pillow 9.5.0",
         "vuln_id": "CVE-2023-4863",
         "summary": "libwebp: OOB write in BuildHuffmanTable",
         "priority": "CRITICAL",
-        "priority_reasoning": "This vulnerability is in the CISA Known Exploited Vulnerabilities catalogue, confirming it is actively being exploited in the wild.",
+        "priority_reasoning": "In CISA KEV — active exploitation confirmed",
         "cvss_score": 9.6,
         "epss": 0.936,
         "epss_percentile": 0.998,
@@ -101,13 +94,12 @@ if __name__ == "__main__":
     }
 
     print("\nTesting LLM explanation...\n")
-    result = explain_vulnerability(test_data)
+    result = explain_vulnerability(test)
 
     if result:
-        print(f"  Priority: {test_data['priority']}")
-        print(f"  Scoring: {test_data['priority_reasoning']}")
-        print(f"\n  AI Explanation:")
+        print(f"  Priority: {test['priority']}")
+        print(f"  Scoring: {test['priority_reasoning']}\n")
         for line in result.strip().split("\n"):
             print(f"    {line}")
     else:
-        print("  Failed. Check your OPENROUTER_API_KEY in .env")
+        print("  Failed — check OPENROUTER_API_KEY in .env")

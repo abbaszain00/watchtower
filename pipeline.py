@@ -1,4 +1,4 @@
-"""Shared scan pipeline logic used by both scan.py (CLI) and app.py (dashboard)."""
+# Shared pipeline logic — used by scan.py and app.py
 
 from osv_client import query_osv, summarise_vulns
 from epss_client import get_epss_scores
@@ -8,7 +8,6 @@ from llm_client import explain_vulnerability
 
 
 def build_finding(dep, vuln_summary):
-    """Create a finding dict from a dependency and OSV vulnerability summary."""
     return {
         "package": f"{dep['name']} {dep['version']}",
         "ecosystem": dep["ecosystem"],
@@ -22,7 +21,7 @@ def build_finding(dep, vuln_summary):
 
 
 def deduplicate(findings):
-    """Keep the most complete entry per CVE."""
+    # Keep the most complete entry per CVE
     seen = {}
     for f in findings:
         key = f["cve_ids"][0] if f["cve_ids"] else f["vuln_id"]
@@ -42,10 +41,6 @@ def get_primary_cve(finding):
 
 
 def scan_deps(deps, on_progress=None):
-    """Query OSV for each dependency. Returns raw (unscored) findings.
-    
-    on_progress(dep_index, dep) is called per-dependency if provided.
-    """
     findings = []
     for i, dep in enumerate(deps):
         if on_progress:
@@ -58,12 +53,10 @@ def scan_deps(deps, on_progress=None):
 
 
 def enrich(findings, kev_data):
-    """Add EPSS scores and KEV matches to findings."""
     all_cves = set()
     for f in findings:
         all_cves.update(f["cve_ids"])
 
-    # EPSS (batched in chunks of 30)
     epss_scores = {}
     if all_cves:
         cve_list = list(all_cves)
@@ -71,7 +64,6 @@ def enrich(findings, kev_data):
             scores = get_epss_scores(cve_list[i:i + 30])
             epss_scores.update(scores)
 
-    # KEV
     kev_matches = check_kev(list(all_cves), kev_data)
 
     for f in findings:
@@ -87,7 +79,6 @@ def enrich(findings, kev_data):
 
 
 def score_and_sort(findings):
-    """Run the scorer on each finding and sort by priority."""
     for f in findings:
         result = calculate_priority(f)
         f["priority"] = result["priority"]
@@ -100,7 +91,6 @@ def score_and_sort(findings):
 
 
 def add_llm_explanations(findings):
-    """Add LLM explanations to CRITICAL and HIGH findings."""
     for f in findings:
         if f["priority"] not in ("CRITICAL", "HIGH"):
             continue

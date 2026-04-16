@@ -1,5 +1,3 @@
-"""BigQuery integration — stores scan findings for dashboard consumption."""
-
 import os
 from datetime import datetime
 from google.cloud import bigquery
@@ -12,43 +10,32 @@ DATASET_ID = "watchtower_data"
 TABLE_ID = "scan_findings"
 FULL_TABLE_ID = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}"
 
-# Point to your service account key
 KEY_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "watchtower-493408-3429bdc3bd84.json")
 
 
 def get_client():
-    """Get an authenticated BigQuery client (Streamlit secrets → local JSON fallback)."""
-    # Try Streamlit secrets first (cloud deployment)
+    # Streamlit Cloud first, fall back to local key file
     try:
         import streamlit as st
         if hasattr(st, 'secrets') and "gcp_service_account" in st.secrets:
             from google.oauth2 import service_account
-            creds_dict = dict(st.secrets["gcp_service_account"])
-            credentials = service_account.Credentials.from_service_account_info(creds_dict)
-            return bigquery.Client(credentials=credentials, project=PROJECT_ID)
+            creds = service_account.Credentials.from_service_account_info(dict(st.secrets["gcp_service_account"]))
+            return bigquery.Client(credentials=creds, project=PROJECT_ID)
     except ImportError:
         pass
     except Exception as e:
         print(f"  [WARNING] Streamlit secrets failed: {e}")
 
-    # Fall back to local JSON key file
     if os.path.exists(KEY_FILE):
         return bigquery.Client.from_service_account_json(KEY_FILE, project=PROJECT_ID)
-    
-    raise FileNotFoundError(
-        f"No BigQuery credentials found. Either set up Streamlit secrets "
-        f"or provide {KEY_FILE}"
-    )
+
+    raise FileNotFoundError(f"No credentials found — need Streamlit secrets or {KEY_FILE}")
 
 
 def setup_bigquery():
-    """
-    Create the dataset and table if they don't exist.
-    Run this once before first scan.
-    """
+    """Create dataset + table if they don't exist. Run once before first scan."""
     client = get_client()
 
-    # Create dataset
     dataset_ref = bigquery.DatasetReference(PROJECT_ID, DATASET_ID)
     dataset = bigquery.Dataset(dataset_ref)
     dataset.location = "US"
@@ -60,7 +47,6 @@ def setup_bigquery():
         client.create_dataset(dataset)
         print(f"  Created dataset {DATASET_ID}.")
 
-    # Define table schema
     schema = [
         bigquery.SchemaField("scan_id", "STRING", mode="REQUIRED"),
         bigquery.SchemaField("scan_timestamp", "TIMESTAMP", mode="REQUIRED"),
@@ -95,39 +81,35 @@ def setup_bigquery():
 
 
 def save_findings(findings, source_file, triage_time, scan_id=None):
-    """Write scan findings to BigQuery."""
     client = get_client()
 
     if scan_id is None:
         scan_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
     timestamp = datetime.utcnow().isoformat()
-    total_findings = len(findings)
-
     rows = []
-    for finding in findings:
-        primary_cve = finding["cve_ids"][0] if finding.get("cve_ids") else finding.get("vuln_id", "")
 
-        row = {
+    for f in findings:
+        primary_cve = f["cve_ids"][0] if f.get("cve_ids") else f.get("vuln_id", "")
+        rows.append({
             "scan_id": scan_id,
             "scan_timestamp": timestamp,
             "source_file": source_file,
-            "package": finding.get("package", ""),
-            "ecosystem": finding.get("ecosystem", ""),
+            "package": f.get("package", ""),
+            "ecosystem": f.get("ecosystem", ""),
             "cve_id": primary_cve,
-            "summary": finding.get("summary", ""),
-            "cvss_score": finding.get("cvss_score"),
-            "epss_score": finding.get("epss"),
-            "epss_percentile": finding.get("epss_percentile"),
-            "in_kev": finding.get("in_kev", False),
-            "ransomware_use": finding.get("kev_details", {}).get("ransomware_use") if finding.get("kev_details") else None,
-            "priority": finding.get("priority", ""),
-            "priority_reasoning": finding.get("priority_reasoning", ""),
-            "llm_explanation": finding.get("llm_explanation"),
+            "summary": f.get("summary", ""),
+            "cvss_score": f.get("cvss_score"),
+            "epss_score": f.get("epss"),
+            "epss_percentile": f.get("epss_percentile"),
+            "in_kev": f.get("in_kev", False),
+            "ransomware_use": f.get("kev_details", {}).get("ransomware_use") if f.get("kev_details") else None,
+            "priority": f.get("priority", ""),
+            "priority_reasoning": f.get("priority_reasoning", ""),
+            "llm_explanation": f.get("llm_explanation"),
             "triage_time_seconds": triage_time,
-            "total_findings": total_findings,
-        }
-        rows.append(row)
+            "total_findings": len(findings),
+        })
 
     if rows:
         errors = client.insert_rows_json(FULL_TABLE_ID, rows)
@@ -140,17 +122,13 @@ def save_findings(findings, source_file, triage_time, scan_id=None):
 
 
 def get_latest_scan():
-    """Get the most recent scan results from BigQuery."""
     client = get_client()
-
     query = f"""
         SELECT *
         FROM `{FULL_TABLE_ID}`
         WHERE scan_id = (
-            SELECT scan_id
-            FROM `{FULL_TABLE_ID}`
-            ORDER BY scan_timestamp DESC
-            LIMIT 1
+            SELECT scan_id FROM `{FULL_TABLE_ID}`
+            ORDER BY scan_timestamp DESC LIMIT 1
         )
         ORDER BY
             CASE priority
@@ -161,15 +139,11 @@ def get_latest_scan():
             END,
             epss_score DESC
     """
-
-    results = client.query(query).result()
-    return [dict(row) for row in results]
+    return [dict(row) for row in client.query(query).result()]
 
 
 def get_all_scans():
-    """Get a summary of all scans (one row per scan with counts)."""
     client = get_client()
-
     query = f"""
         SELECT
             scan_id,
@@ -185,42 +159,29 @@ def get_all_scans():
         GROUP BY scan_id
         ORDER BY scan_time DESC
     """
-
-    results = client.query(query).result()
-    return [dict(row) for row in results]
+    return [dict(row) for row in client.query(query).result()]
 
 
 def get_last_scan_packages():
-    """Get unique packages from the most recent scan."""
     client = get_client()
-
     query = f"""
         SELECT DISTINCT package, ecosystem
         FROM `{FULL_TABLE_ID}`
         WHERE scan_id = (
-            SELECT scan_id
-            FROM `{FULL_TABLE_ID}`
-            ORDER BY scan_timestamp DESC
-            LIMIT 1
+            SELECT scan_id FROM `{FULL_TABLE_ID}`
+            ORDER BY scan_timestamp DESC LIMIT 1
         )
     """
-
-    results = client.query(query).result()
     packages = []
-    for row in results:
+    for row in client.query(query).result():
         pkg = dict(row)
-        # Split "Django 4.2.0" into name and version
         parts = pkg["package"].rsplit(" ", 1)
         if len(parts) == 2:
-            packages.append({
-                "name": parts[0],
-                "version": parts[1],
-                "ecosystem": pkg["ecosystem"]
-            })
+            packages.append({"name": parts[0], "version": parts[1], "ecosystem": pkg["ecosystem"]})
     return packages
 
 
 if __name__ == "__main__":
-    print("\nSetting up BigQuery for Watchtower...\n")
+    print("\nSetting up BigQuery...\n")
     setup_bigquery()
-    print("\nDone. BigQuery is ready.")
+    print("\nDone.")

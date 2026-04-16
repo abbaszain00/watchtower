@@ -1,11 +1,3 @@
-"""
-Watchtower CLI scanner.
-
-Usage:
-  python scan.py samples/requirements.txt
-  python scan.py samples/package.json --no-llm
-"""
-
 import sys
 import time
 from parse_deps import parse_file
@@ -16,7 +8,6 @@ from pipeline import deduplicate, scan_deps, enrich, score_and_sort, add_llm_exp
 
 
 def reasoning_bullets(finding):
-    """Short reasoning bullets for terminal output."""
     bullets = []
 
     if finding["in_kev"]:
@@ -45,9 +36,7 @@ def reasoning_bullets(finding):
 
 
 def print_finding(finding, verbose=False):
-    """Print a single finding to terminal."""
     cve = get_primary_cve(finding)
-
     print(f"\n  [{finding['priority']}] {finding['package']} — {cve}")
     print(f"  {finding['summary']}")
 
@@ -72,32 +61,22 @@ def print_finding(finding, verbose=False):
 
 
 def scan(filepath, use_llm=True):
-    """Run the full Watchtower scan pipeline."""
-
     print(f"\n{'=' * 50}")
     print("  WATCHTOWER — Scan")
     print(f"{'=' * 50}")
 
     start = time.time()
 
-    # 1. Parse
     print(f"\n[1/6] Parsing {filepath}...")
     deps = parse_file(filepath)
     print(f"  {len(deps)} dependencies")
 
-    # 2. Load KEV
     print("\n[2/6] Loading CISA KEV catalogue...")
     kev_data = download_kev()
 
-    # 3. Query OSV
     print("\n[3/6] Scanning against OSV...")
-
-    def on_osv_progress(i, dep):
-        pass  # scan_deps prints nothing by default; we log below
-
     all_findings = scan_deps(deps)
     for dep in deps:
-        # Just log clean/dirty status
         has_vulns = any(f["package"].startswith(dep["name"]) for f in all_findings)
         if has_vulns:
             count = sum(1 for f in all_findings if f["package"] == f"{dep['name']} {dep['version']}")
@@ -109,32 +88,26 @@ def scan(filepath, use_llm=True):
         print("\n  No vulnerabilities found.")
         return
 
-    # 4. Deduplicate
     print(f"\n[4/6] Deduplicating ({len(all_findings)} raw)...")
     all_findings = deduplicate(all_findings)
     print(f"  {len(all_findings)} unique")
 
-    # 5. Enrich + score
     print("\n[5/6] Enriching with EPSS and KEV...")
     all_findings = enrich(all_findings, kev_data)
     all_findings = score_and_sort(all_findings)
 
-    # 6. LLM explanations
     print("\n[6/6] Generating AI explanations...")
     if use_llm:
         all_findings = add_llm_explanations(all_findings)
 
     elapsed = time.time() - start
 
-    # Discord alerts
     send_alerts(all_findings, {"filepath": filepath, "deps_scanned": len(deps), "elapsed": elapsed})
 
-    # Count by priority
     counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
     for f in all_findings:
         counts[f["priority"]] += 1
 
-    # Output
     print(f"\n{'=' * 50}")
     print(f"  Scan Results — {len(deps)} deps, {len(all_findings)} vulns")
     print(f"  CRITICAL: {counts['CRITICAL']}  HIGH: {counts['HIGH']}  MEDIUM: {counts['MEDIUM']}  LOW: {counts['LOW']}")
